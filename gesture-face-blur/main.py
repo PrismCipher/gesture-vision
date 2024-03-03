@@ -4,111 +4,74 @@ import mediapipe as mp
 import numpy as np
 from facial_landmarks import FaceLandmarks
 
-# Initialize objects to detect hands and eyes
+# Initialize objects to detect hands and face
 mp_hands = mp.solutions.hands
 mp_face_mesh = mp.solutions.face_mesh
 mp_drawing = mp.solutions.drawing_utils
 fl = FaceLandmarks()
 
-# Loading models
-hands = mp_hands.Hands(static_image_mode=False, max_num_hands=2, min_detection_confidence=0.5)
-face_mesh = mp_face_mesh.FaceMesh(static_image_mode=False, min_detection_confidence=0.5, min_tracking_confidence=0.5)
-
 def process_img(img, face_detection, hands_detection, blur_enabled=True):
     H, W, _ = img.shape
 
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    out = face_detection.process(img_rgb)
+    if blur_enabled:
+        img = blur_face(img)
 
-    face_regions = []  
-    if out.multi_face_landmarks is not None:
-        # Get the facial landmarks
-        landmarks = fl.get_facial_landmarks(img)
-        if landmarks is not None:
-            convexhull = cv2.convexHull(landmarks)
-
-        for facial_landmarks in out.multi_face_landmarks:
-            # Get the bounding box of the face
-            bbox = [min([landmark.x for landmark in facial_landmarks.landmark]),
-                    min([landmark.y for landmark in facial_landmarks.landmark]),
-                    max([landmark.x for landmark in facial_landmarks.landmark]),
-                    max([landmark.y for landmark in facial_landmarks.landmark])]
-
-            x1, y1, x2, y2 = [int(val * W) if idx % 2 == 0 else int(val * H) for idx, val in enumerate(bbox)]
-            w, h = x2 - x1, y2 - y1
-
-            if w > 0 and h > 0:
-                face_regions.append((x1, y1, w, h))  
-
-                face_region = img[y1:y1 + h, x1:x1 + w, :]
-                if not face_region.size == 0:
-                    if blur_enabled:
-                        img[y1:y1 + h, x1:x1 + w, :] = cv2.blur(face_region, (30, 30))
-                    else:
-                        img[y1:y1 + h, x1:x1 + w, :] = unblur_face(face_region, face_detection)
-
-    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     results = hands_detection.process(img_rgb)
-
     if results.multi_hand_landmarks:
         for hand_landmarks in results.multi_hand_landmarks:
-            hand_x, hand_y = hand_landmarks.landmark[0].x * W, hand_landmarks.landmark[0].y * H
-            hand_in_face_region = False
-            for face_region in face_regions:
-                x1, y1, w, h = face_region
-                if x1 < hand_x < x1 + w and y1 < hand_y < y1 + h:
-                    hand_in_face_region = True
-                    break
+            #hand_x, hand_y = hand_landmarks.landmark[0].x * W, hand_landmarks.landmark[0].y * H
 
-            if not hand_in_face_region:
-                finger_states, fingers_count = calculate_finger_states(hand_landmarks)
+            finger_states, fingers_count = calculate_finger_states(hand_landmarks)
 
-                if fingers_count == 1:
-                    blur_enabled = True
-                elif fingers_count == 5:
-                    blur_enabled = False
+            if fingers_count == 1:
+                blur_enabled = True
+            elif fingers_count == 5:
+                blur_enabled = False
 
     return img, blur_enabled
 
-def unblur_face(img, face_detection):
-    H, W, _ = img.shape
-    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+def blur_face(frame):
+    frame_copy = frame.copy()
+    height, width, _ = frame.shape
+    img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     out = face_detection.process(img_rgb)
-
+    # Face landmark detection
     if out.multi_face_landmarks is not None:
-        for facial_landmarks in out.multi_face_landmarks:
-            bbox = [min([landmark.x for landmark in facial_landmarks.landmark]),
-                    min([landmark.y for landmark in facial_landmarks.landmark]),
-                    max([landmark.x for landmark in facial_landmarks.landmark]),
-                    max([landmark.y for landmark in facial_landmarks.landmark])]
+        # Get the facial landmarks
+        landmarks = fl.get_facial_landmarks(frame)
+        if landmarks is not None and landmarks.ndim == 2 and landmarks.shape[1] == 2:
+            convexhull = cv2.convexHull(landmarks)
+            # Face blurrying
+            mask = np.zeros((height, width), np.uint8)
+            cv2.fillConvexPoly(mask, convexhull, 255)
 
-            x1, y1, x2, y2 = [int(val * W) if idx % 2 == 0 else int(val * H) for idx, val in enumerate(bbox)]
-            w, h = x2 - x1, y2 - y1
+            # Extract the face
+            frame_copy = cv2.blur(frame_copy, (30, 30))
+            face_extracted = cv2.bitwise_and(frame_copy, frame_copy, mask=mask)
 
-            if w > 0 and h > 0:
-                face_region = img[y1:y1 + h, x1:x1 + w, :]
-                if not face_region.size == 0:
-                    img[y1:y1 + h, x1:x1 + w, :] = face_region
+            # Extract background
+            background_mask = cv2.bitwise_not(mask)
+            background = cv2.bitwise_and(frame, frame, mask=background_mask)
 
-    return img
+            # Final result
+            result = cv2.add(background, face_extracted)
+        else:
+            result = frame
+    else:
+        result = frame
+    return result
 
 def calculate_finger_states(hand_landmarks):
-    finger_states = [0, 0, 0, 0, 0]
+    finger_states = []
+    finger_tip_landmarks = [4, 8, 12, 16, 20]
+    finger_base_landmarks = [3, 6, 10, 14, 18]
 
-    if hand_landmarks.landmark[3].y > hand_landmarks.landmark[4].y:
-        finger_states[0] = 1
-
-    if hand_landmarks.landmark[6].y > hand_landmarks.landmark[8].y:
-        finger_states[1] = 1
-
-    if hand_landmarks.landmark[10].y > hand_landmarks.landmark[12].y:
-        finger_states[2] = 1
-
-    if hand_landmarks.landmark[14].y > hand_landmarks.landmark[16].y:
-        finger_states[3] = 1
-
-    if hand_landmarks.landmark[18].y > hand_landmarks.landmark[20].y:
-        finger_states[4] = 1
+    for tip, base in zip(finger_tip_landmarks, finger_base_landmarks):
+        if hand_landmarks.landmark[base].y > hand_landmarks.landmark[tip].y:
+            finger_states.append(1)
+        else:
+            finger_states.append(0)
 
     fingers_count = sum(finger_states)
 
@@ -118,9 +81,8 @@ output_dir = './output'
 if not os.path.exists(output_dir):
     os.makedirs(output_dir)
 
-mp_face_detection = mp.solutions.face_detection
-with face_mesh as face_detection:
-    mp_hands = mp.solutions.hands
+# Loading models
+with mp_face_mesh.FaceMesh(static_image_mode=False, min_detection_confidence=0.5, min_tracking_confidence=0.5) as face_detection:
     with mp_hands.Hands(static_image_mode=False, max_num_hands=1, min_detection_confidence=0.5) as hands_detection:
 
         args = {"mode": 'webcam', "filePath": None}
@@ -164,5 +126,6 @@ with face_mesh as face_detection:
                     break
 
                 ret, frame = cap.read()
-
+            # destroy all windows
+            cv2.destroyAllWindows()
             cap.release()
