@@ -1,210 +1,244 @@
-import os
 import cv2
 import mediapipe as mp
-import numpy as np
+import customtkinter
+import tkinter as tk
+import threading
+import queue
+from tkinter import Text, Scrollbar
+from Face import image_processor
+from facial_landmarks import FaceLandmarks
+from PIL import Image, ImageTk
 
-def calculate_finger_states(hand_landmarks):
-    """
-    Обчислення стану пальців на основі ландмарок руки.
-
-    Аргументи:
-    - hand_landmarks: Ландмарки руки.
-
-    Повертає:
-    - Список, який представляє стан кожного пальця (0 або 1).
-    - Загальна кількість піднятих пальців.
-    """
-    landmarks = np.array([(landmark.x, landmark.y) for landmark in hand_landmarks.landmark])
-    finger_states = np.zeros(5, dtype=int)
-    
-    # Thumb
-    finger_states[0] = int(landmarks[2, 0] > landmarks[4, 0])
-    
-    # Other fingers
-    finger_states[1:] = (landmarks[[6, 10, 14, 18], 1] > landmarks[[8, 12, 16, 20], 1]).astype(int)
-    
-    fingers_count = np.sum(finger_states)
-
-    return finger_states, fingers_count
+customtkinter.set_appearance_mode("System")
+customtkinter.set_default_color_theme("dark-blue")
 
 
-def unblur_face(img, face_detection):
-    """
-    Прибрати розмиття з облич на зображенні.
+class FaceBlurApp(customtkinter.CTk):
+    def __init__(self):
+        super().__init__()
 
-    Аргументи:
-    - img: Вхідне зображення.
-    - face_detection: Модель виявлення облич.
+        # Configure Window
 
-    Повертає:
-    - Зображення із нерозмитими обличчями.
-    """
-    H, W, _ = img.shape
-    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    out = face_detection.process(img_rgb)
+        self.title("FaceBlurApp")
 
-    if out.detections is not None:
-        for detection in out.detections:
-            location_data = detection.location_data
-            bbox = location_data.relative_bounding_box
+        # Configure Settings
 
-            x1, y1, w, h = int(bbox.xmin * W), int(bbox.ymin * H), int(bbox.width * W), int(bbox.height * H)
+        self.video = cv2.VideoCapture(0)
+        self.is_camera_enabled = False
+        self.is_debug_enabled = False
+        self.is_gesture_enabled = False
+        self.is_faceblur_enabled = False
+        self.is_handblur_enabled = False
+        # creating widgets
 
-            if w > 0 and h > 0:
-                face_region = img[y1:y1 + h, x1:x1 + w, :]
-                if not face_region.size == 0:
-                    img[y1:y1 + h, x1:x1 + w, :] = face_region
+        self.image_label = tk.Label(master=self)
+        self.image_label.grid(row=0, column=0, columnspan=2, padx=0, pady=(0, 0), sticky="nsew")
 
-    return img
-def process_image_with_detection(img, hands_detection, blur_enabled=True):
-    #Функція розмиття руки
+        self.button_frame = customtkinter.CTkFrame(master=self, corner_radius=0)
+        self.button_frame.grid(row=1, column=0,sticky="nsew")
 
-    H, W, _ = img.shape
+        self.toggle_gesture_button = customtkinter.CTkButton(self.button_frame, text="Gesture Recognition",
+                                                             command=self.toggle_gesture_recognition)
+        self.toggle_gesture_button.grid(row=0, column=0, padx=20, pady=15, sticky="ew")
 
-    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    out1 = hands_detection.process(img_rgb)
+        self.toggle_camera_button = customtkinter.CTkButton(self.button_frame, text="Camera", command=self.toggle_camera)
+        self.toggle_camera_button.grid(row=0, column=1, padx=20, pady=15, sticky="ew")
 
-    hand_regions = []
-    if out1.multi_hand_landmarks:
-        for hand_landmarks in out1.multi_hand_landmarks:
-            hand_x, hand_y = hand_landmarks.landmark[0].x * W, hand_landmarks.landmark[0].y * H
+        self.faceblur_button = customtkinter.CTkButton(self.button_frame, text="Face Blur", command=self.toggle_faceblur)
+        self.faceblur_button.grid(row=0, column=2, padx=20, pady=15, sticky="ew")
 
-            finger_states, fingers_count = calculate_finger_states(hand_landmarks)
+        self.handblur_button = customtkinter.CTkButton(self.button_frame, text="Hand blur", command=self.toggle_handblur)
+        self.handblur_button.grid(row=0, column=3, padx=20, pady=15, sticky="ew")
 
-            if fingers_count == 1 and finger_states[1] == 1:
-                blur_enabled = True
+        self.debug_button = customtkinter.CTkButton(self.button_frame, text="Debug", command=self.toggle_debug_console)
+        self.debug_button.grid(row=0, column=5, padx=20, pady=15, sticky="ew")
+
+        self.gray_image = Image.new("RGB", (640, 480), "gray")  # Создаем серый прямоугольник
+        self.gray_photo = ImageTk.PhotoImage(self.gray_image)
+        self.image_label.config(image=self.gray_photo)  # Устанавливаем серый прямоугольник по умолчанию
+
+        self.debug_console = None
+        self.timer = None
+
+        self.toplevel_window = None
+
+        self.camera_lock = threading.Lock()
+
+    # Functions creating
+
+    # CAMERA
+
+    def toggle_camera(self):
+        self.is_camera_enabled = not self.is_camera_enabled
+        if self.is_camera_enabled:
+            self.toggle_camera_button.configure(fg_color="#C850C0", hover_color="#c85090")
+            self.start_camera()
+            self.start_threads()
+            if self.is_debug_enabled:
+                self.send_debug_message("camera enabled")
+        else:
+            self.toggle_camera_button.configure(fg_color="#1f538d", hover_color="#14375e")
+            self.stop_camera()
+            self.stop_threads()
+            if self.is_debug_enabled:
+                self.send_debug_message("camera disabled")
+
+    def start_camera(self):
+        self.video = cv2.VideoCapture(0)
+        self.timer = self.after(5, self.update_frame)
+
+    def stop_camera(self):
+        if self.timer:
+            self.after_cancel(self.timer)
+        self.video.release()
+        self.image_label.config(image=self.gray_photo)  # При отключении камеры отображаем серый прямоугольник
+
+    def update_frame(self):
+        ret, frame = self.video.read()
+        if ret:
+            self.transfer_frame(frame)
+            if self.queue_process_interface.empty():
+                # Зеркально отразить кадр по горизонтали
+                frame = cv2.flip(frame, 1)
+
+                rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                img = Image.fromarray(rgb_image)
+                img = ImageTk.PhotoImage(image=img)
+
+                self.image_label.img = img
+                self.image_label.config(image=img)
             else:
-                blur_enabled = False
+                frame = self.queue_process_interface.get()
+                rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                img = Image.fromarray(rgb_image)
+                img = ImageTk.PhotoImage(image=img)
+                self.image_label.img = img
+                self.image_label.config(image=img)
 
-            hand_regions.append((hand_x, hand_y, finger_states, fingers_count))
+        if self.is_camera_enabled:
+            self.timer = self.after(10, self.update_frame)
 
-    for hand_x, hand_y, finger_states, fingers_count in hand_regions:
-        if blur_enabled:
-            # Збільшуємо область розмиття вище руки
-            blur_radius = 100
-            img[int(hand_y) - blur_radius * 2:int(hand_y) + 20,
-            int(hand_x) - blur_radius:int(hand_x) + blur_radius] = cv2.blur(
-                img[int(hand_y) - blur_radius * 2:int(hand_y) + 20,
-                int(hand_x) - blur_radius:int(hand_x) + blur_radius], (70, 70))
+    # FACE BLUR
 
-    return img, blur_enabled
-def process_img(img, face_detection, hands_detection, blur_enabled=True):
-    """
-    Обробка зображення шляхом виявлення облич та рук, та застосування розмиття на основі жестів рук.
+    def toggle_faceblur(self):
+        self.is_faceblur_enabled = not self.is_faceblur_enabled
+        if self.is_faceblur_enabled:
+            self.faceblur_button.configure(fg_color="#C850C0", hover_color="#c85090")
+            if self.is_debug_enabled:
+                self.send_debug_message("Face blur enabled")
+        else:
+            self.faceblur_button.configure(fg_color="#1f538d", hover_color="#14375e")
+            if self.is_debug_enabled:
+                self.send_debug_message("Face blur disabled")
 
-    Аргументи:
-    - img: Вхідне зображення.
-    - face_detection: Модель виявлення облич.
-    - hands_detection: Модель виявлення рук.
-    - blur_enabled: Бульове значення, що вказує, чи застосовувати розмиття.
+    # HANDS BLUR
 
-    Повертає:
-    - Оброблене зображення.
-    - Поточний стан розмиття.
-    """
-    H, W, _ = img.shape
+    def toggle_handblur(self):
+        self.is_handblur_enabled = not self.is_handblur_enabled
+        if self.is_handblur_enabled:
+            self.handblur_button.configure(fg_color="#C850C0", hover_color="#c85090")
+            if self.is_debug_enabled:
+                self.send_debug_message("Hand blur enabled")
+        else:
+            self.handblur_button.configure(fg_color="#1f538d", hover_color="#14375e")
+            if self.is_debug_enabled:
+                self.send_debug_message("Hand blur disabled")
 
-    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    out = face_detection.process(img_rgb)
+    # DEBUG
 
-    face_regions = []
-    if out.detections is not None:
-        for detection in out.detections:
-            location_data = detection.location_data
-            bbox = location_data.relative_bounding_box
+    def toggle_debug_console(self):
+        self.is_debug_enabled = not self.is_debug_enabled
+        if self.is_debug_enabled:
+            self.debug_button.configure(fg_color="#C850C0", hover_color="#c85090")
+            self.open_debug_console()
+        else:
+            self.debug_button.configure(fg_color="#1f538d", hover_color="#14375e")
+            self.close_debug_console()
 
-            x1, y1, w, h = int(bbox.xmin * W), int(bbox.ymin * H), int(bbox.width * W), int(bbox.height * H)
+    def open_debug_console(self):
+        if not self.debug_console:
+            self.debug_console = tk.Toplevel()
+            self.debug_console.title("Debug Console")
+            self.debug_console.resizable(False, False)  # Запрещаем изменение размеров окна
 
-            if w > 0 and h > 0:
-                face_regions.append((x1, y1, w, h))
+            self.debug_text = Text(self.debug_console)
+            self.debug_text.pack(expand=True, fill=tk.BOTH)
 
-                face_region = img[y1:y1 + h, x1:x1 + w, :]
-                if not face_region.size == 0:
-                    if blur_enabled:
-                        img[y1:y1 + h, x1:x1 + w, :] = cv2.blur(face_region, (30, 30))
-                    else:
-                        img[y1:y1 + h, x1:x1 + w, :] = unblur_face(face_region, face_detection)
+            scrollbar = Scrollbar(self.debug_console, command=self.debug_text.yview)
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            self.debug_text.config(yscrollcommand=scrollbar.set)
 
-    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    results = hands_detection.process(img_rgb)
+    def close_debug_console(self):
+        if self.debug_console:
+            self.debug_console.destroy()
+            self.debug_console = None
+            
+    def send_debug_message(self, message):
+        if self.is_debug_enabled and self.debug_text:
+            self.debug_text.insert(tk.END, message + "\n")
+            self.debug_text.see(tk.END)
 
-    if results.multi_hand_landmarks:
-        for hand_landmarks in results.multi_hand_landmarks:
-            hand_x, hand_y = hand_landmarks.landmark[0].x * W, hand_landmarks.landmark[0].y * H
-            hand_in_face_region = False
-            for face_region in face_regions:
-                x1, y1, w, h = face_region
-                if x1 < hand_x < x1 + w and y1 < hand_y < y1 + h:
-                    hand_in_face_region = True
-                    break
+    # GESTURE RECOGNITION
 
-            if not hand_in_face_region:
-                finger_states, fingers_count = calculate_finger_states(hand_landmarks)
+    def toggle_gesture_recognition(self):
+        self.is_gesture_enabled = not self.is_gesture_enabled
+        if self.is_gesture_enabled:
+            self.toggle_gesture_button.configure(fg_color="#C850C0", hover_color="#c85090")
+            if self.is_debug_enabled:
+                self.send_debug_message("gesture recognition enabled")
+        else:
+            self.toggle_gesture_button.configure(fg_color="#1f538d", hover_color="#14375e")
+            if self.is_debug_enabled:
+                self.send_debug_message("gesture recognition disabled")
+    
+    # SCARY THING - THREADING
 
-                if fingers_count == 1 and finger_states[4]==1:
-                    blur_enabled = True
-                elif fingers_count == 2 and finger_states[1]==1 and finger_states[2] ==1:
-                    blur_enabled = False
-                elif fingers_count == 1 and finger_states[1] == 1:
-                    process_image_with_detection(img, hands_detection)
+    queue_interface_process = queue.Queue()
+    queue_process_interface = queue.Queue()
 
+    def transfer_frame(self, frame):
+        self.queue_interface_process.put(frame)
 
+    def start_threads(self):
+        self.process_image_thread = threading.Thread(target=self.process_image_thread)
+        self.get_result_thread = threading.Thread(target=self.get_result_thread)
+        self.process_image_thread.start()
+        self.get_result_thread.start()
 
-    return img, blur_enabled
+    def stop_threads(self):
+        # Add a way to stop the threads
+        self.is_camera_enabled = False
+        # Wait for the threads to finish
+        self.process_image_thread.join()
+        self.get_result_thread.join()
 
-def check_output_dir(output_dir):
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
+    def process_image_thread(self, frame):
+        while self.is_camera_enabled:
+            processor = image_processor()
+            mp_face_mesh = mp.solutions.face_mesh
+            mp_hands = mp.solutions.hands
+            face_detection, hands_detection = None, None
+            if self.is_faceblur_enabled:
+                face_detection = mp_face_mesh.FaceMesh(static_image_mode=False, min_detection_confidence=0.5, min_tracking_confidence=0.5)
+            if self.is_gesture_enabled:
+                hands_detection = mp_hands.Hands(static_image_mode=False, max_num_hands=1, min_detection_confidence=0.5)
+            while True:
+                if not self.queue_interface_process.empty():
+                    frame = self.queue_interface_process.get()
+                    frame = processor.process_img(frame, face_detection, hands_detection, self.is_faceblur_enabled)
+                    self.queue_process_interface.put(frame)
+                    
+    def get_result_thread(self):
+        while self.is_camera_enabled:
+            if not self.queue_process_interface.empty():
+                frame = self.queue_process_interface.get()
+                rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                img = Image.fromarray(rgb_image)
+                img = ImageTk.PhotoImage(image=img)
+                self.image_label.img = img
+                self.image_label.config(image=img)
 
-def main():
-    mp_face_detection = mp.solutions.face_detection
-    with mp_face_detection.FaceDetection(model_selection=0, min_detection_confidence=0.5) as face_detection:
-        mp_hands = mp.solutions.hands
-        with mp_hands.Hands(static_image_mode=False, max_num_hands=1, min_detection_confidence=0.5) as hands_detection:
-
-            args = {"mode": 'webcam', "filePath": None}
-            output_dir = './output'
-            if args["mode"] in ["image"]:
-                img = cv2.imread(args["filePath"])
-                check_output_dir(output_dir)
-                img = process_img(img, face_detection, hands_detection)
-
-                cv2.imwrite(os.path.join(output_dir, 'output.png'), img)
-
-            elif args["mode"] in ['video']:
-                cap = cv2.VideoCapture(args["filePath"])
-                ret, frame = cap.read()
-                check_output_dir(output_dir)
-                output_video = cv2.VideoWriter(os.path.join(output_dir, 'output.mp4'),
-                                            cv2.VideoWriter_fourcc(*'MP4V'),
-                                            25,
-                                            (frame.shape[1], frame.shape[0]))
-
-                while ret:
-                    frame = process_img(frame, face_detection, hands_detection)
-
-                    output_video.write(frame)
-
-                    ret, frame = cap.read()
-
-                cap.release()
-                output_video.release()
-
-            elif args["mode"] in ['webcam']:
-                cap = cv2.VideoCapture(0)
-
-                ret, frame = cap.read()
-                blur_enabled = True
-                while ret:
-                    frame, blur_enabled = process_img(frame, face_detection, hands_detection, blur_enabled)
-
-                    cv2.imshow('frame', frame)
-                    if cv2.waitKey(1) & 0xFF == ord('q'):
-                        break
-
-                    ret, frame = cap.read()
-                cv2.destroyAllWindows()
-                cap.release()
 
 if __name__ == "__main__":
-    main()
+    app = FaceBlurApp()
+    app.mainloop()
