@@ -2,6 +2,11 @@ import os
 import cv2
 import mediapipe as mp
 import numpy as np
+from facial_landmarks import FaceLandmarks
+mp_hands = mp.solutions.hands
+mp_face_mesh = mp.solutions.face_mesh
+mp_drawing = mp.solutions.drawing_utils
+fl = FaceLandmarks()
 
 def calculate_finger_states(hand_landmarks):
     """
@@ -67,6 +72,36 @@ def unblur_face(img, face_detection):
                     img[y1:y1 + h, x1:x1 + w, :] = face_region
 
     return img
+def blur_face(frame, face_detection):
+    frame_copy = frame.copy()
+    height, width, _ = frame.shape
+    img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    out = face_detection.process(img_rgb)
+    # Face landmark detection
+    if out.multi_face_landmarks is not None:
+        # Get the facial landmarks
+        landmarks = fl.get_facial_landmarks(frame)
+        if landmarks is not None and landmarks.ndim == 2 and landmarks.shape[1] == 2:
+            convexhull = cv2.convexHull(landmarks)
+            # Face blurrying
+            mask = np.zeros((height, width), np.uint8)
+            cv2.fillConvexPoly(mask, convexhull, 255)
+
+            # Extract the face
+            frame_copy = cv2.blur(frame_copy, (30, 30))
+            face_extracted = cv2.bitwise_and(frame_copy, frame_copy, mask=mask)
+
+            # Extract background
+            background_mask = cv2.bitwise_not(mask)
+            background = cv2.bitwise_and(frame, frame, mask=background_mask)
+
+            # Final result
+            result = cv2.add(background, face_extracted)
+        else:
+            result = frame
+    else:
+        result = frame
+    return result
 def process_image_with_detection(img, face_detection, hands_detection, blur_enabled=True):
     """
     Обробка зображення шляхом виявлення обличчя та рук, та застосування розмиття на основі жестів рук.
@@ -128,48 +163,20 @@ def process_img(img, face_detection, hands_detection, blur_enabled=True):
     H, W, _ = img.shape
 
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    out = face_detection.process(img_rgb)
-
-    face_regions = []
-    if out.detections is not None:
-        for detection in out.detections:
-            location_data = detection.location_data
-            bbox = location_data.relative_bounding_box
-
-            x1, y1, w, h = int(bbox.xmin * W), int(bbox.ymin * H), int(bbox.width * W), int(bbox.height * H)
-
-            if w > 0 and h > 0:
-                face_regions.append((x1, y1, w, h))
-
-                face_region = img[y1:y1 + h, x1:x1 + w, :]
-                if not face_region.size == 0:
-                    if blur_enabled:
-                        img[y1:y1 + h, x1:x1 + w, :] = cv2.blur(face_region, (30, 30))
-                    else:
-                        img[y1:y1 + h, x1:x1 + w, :] = unblur_face(face_region, face_detection)
-
-    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    if blur_enabled:
+        img = blur_face(img, face_detection)
     results = hands_detection.process(img_rgb)
-
     if results.multi_hand_landmarks:
         for hand_landmarks in results.multi_hand_landmarks:
-            hand_x, hand_y = hand_landmarks.landmark[0].x * W, hand_landmarks.landmark[0].y * H
-            hand_in_face_region = False
-            for face_region in face_regions:
-                x1, y1, w, h = face_region
-                if x1 < hand_x < x1 + w and y1 < hand_y < y1 + h:
-                    hand_in_face_region = True
-                    break
+            # hand_x, hand_y = hand_landmarks.landmark[0].x * W, hand_landmarks.landmark[0].y * H
+            finger_states, fingers_count = calculate_finger_states(hand_landmarks)
 
-            if not hand_in_face_region:
-                finger_states, fingers_count = calculate_finger_states(hand_landmarks)
-
-                if fingers_count == 1 and finger_states[4]==1:
-                    blur_enabled = True
-                elif fingers_count == 2 and finger_states[1]==1 and finger_states[2] ==1:
-                    blur_enabled = False
-                elif fingers_count == 1 and finger_states[1] == 1:
-                    process_image_with_detection(img, face_detection, hands_detection, blur_enabled=True)
+            if fingers_count == 1 and finger_states[4] == 1:
+                blur_enabled = True
+            elif fingers_count == 2 and finger_states[1] == 1 and finger_states[2] == 1:
+                blur_enabled = False
+            elif fingers_count == 1 and finger_states[1] == 1:
+                process_image_with_detection(img, face_detection, hands_detection, blur_enabled=True)
 
 
 
@@ -179,8 +186,8 @@ output_dir = './output'
 if not os.path.exists(output_dir):
     os.makedirs(output_dir)
 
-mp_face_detection = mp.solutions.face_detection
-with mp_face_detection.FaceDetection(model_selection=0, min_detection_confidence=0.5) as face_detection:
+mp_face_detection = mp.solutions.face_mesh
+with mp_face_mesh.FaceMesh(static_image_mode=False, min_detection_confidence=0.5, min_tracking_confidence=0.5) as face_detection:
     mp_hands = mp.solutions.hands
     with mp_hands.Hands(static_image_mode=False, max_num_hands=1, min_detection_confidence=0.5) as hands_detection:
 
