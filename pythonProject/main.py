@@ -102,6 +102,8 @@ class FaceBlurApp(customtkinter.CTk):
             self.timer = self.after(10, self.update_frame)
 
     def toggle_faceblur(self):
+        if self.is_experimental_enabled:
+            self.toggle_experimental()
         self.is_faceblur_enabled = not self.is_faceblur_enabled
         if self.is_faceblur_enabled:
             self.faceblur_button.configure(fg_color="#C850C0", hover_color="#c85090")
@@ -167,6 +169,8 @@ class FaceBlurApp(customtkinter.CTk):
             self.debug_text.see(tk.END)
 
     def toggle_experimental(self):
+        if self.is_faceblur_enabled:
+            self.toggle_faceblur()
         self.is_experimental_enabled = not self.is_experimental_enabled
         if self.is_experimental_enabled:
             self.experimental_button.configure(fg_color="#C850C0", hover_color="#c85090")
