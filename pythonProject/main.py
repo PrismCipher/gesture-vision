@@ -64,6 +64,8 @@ class FaceBlurApp(customtkinter.CTk):
 
     # Functions creating
 
+    # CAMERA
+
     def toggle_camera(self):
         self.is_camera_enabled = not self.is_camera_enabled
         if self.is_camera_enabled:
@@ -101,6 +103,8 @@ class FaceBlurApp(customtkinter.CTk):
         if self.is_camera_enabled:
             self.timer = self.after(10, self.update_frame)
 
+    # FACE BLUR
+
     def toggle_faceblur(self):
         if self.is_experimental_enabled:
             self.toggle_experimental()
@@ -114,6 +118,8 @@ class FaceBlurApp(customtkinter.CTk):
             if self.is_debug_enabled:
                 self.send_debug_message("Face blur disabled")
 
+    # HANDS BLUR
+
     def toggle_handblur(self):
         self.is_handblur_enabled = not self.is_handblur_enabled
         if self.is_handblur_enabled:
@@ -124,6 +130,8 @@ class FaceBlurApp(customtkinter.CTk):
             self.handblur_button.configure(fg_color="#1f538d", hover_color="#14375e")
             if self.is_debug_enabled:
                 self.send_debug_message("Hand blur disabled")
+
+    # DEBUG
 
     def toggle_debug_console(self):
         self.is_debug_enabled = not self.is_debug_enabled
@@ -151,6 +159,13 @@ class FaceBlurApp(customtkinter.CTk):
         if self.debug_console:
             self.debug_console.destroy()
             self.debug_console = None
+            
+    def send_debug_message(self, message):
+        if self.is_debug_enabled and self.debug_text:
+            self.debug_text.insert(tk.END, message + "\n")
+            self.debug_text.see(tk.END)
+
+    # GESTURE RECOGNITION
 
     def toggle_gesture_recognition(self):
         self.is_gesture_enabled = not self.is_gesture_enabled
@@ -163,10 +178,7 @@ class FaceBlurApp(customtkinter.CTk):
             if self.is_debug_enabled:
                 self.send_debug_message("gesture recognition disabled")
 
-    def send_debug_message(self, message):
-        if self.is_debug_enabled and self.debug_text:
-            self.debug_text.insert(tk.END, message + "\n")
-            self.debug_text.see(tk.END)
+    # EXPERIMENTAL BLUR    
 
     def toggle_experimental(self):
         if self.is_faceblur_enabled:
