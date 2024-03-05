@@ -88,7 +88,7 @@ def blur_face(frame, face_detection):
             cv2.fillConvexPoly(mask, convexhull, 255)
 
             # Extract the face
-            frame_copy = cv2.blur(frame_copy, (30, 30))
+            frame_copy = cv2.blur(frame_copy, (70, 70))
             face_extracted = cv2.bitwise_and(frame_copy, frame_copy, mask=mask)
 
             # Extract background
