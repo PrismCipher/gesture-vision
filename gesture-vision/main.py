@@ -1,84 +1,132 @@
+import os
 import cv2
 import mediapipe as mp
-import tkinter as tk
-from threading import Thread
-from PIL import Image, ImageTk
+import numpy as np
 
-# Create a window
-window = tk.Tk()
+def calculate_finger_states(hand_landmarks):
+    """
+    Обчислення стану пальців на основі ландмарок руки.
 
-# Create a label for the camera frame
-label = tk.Label(window)
-label.pack()
+    Аргументи:
+    - hand_landmarks: Ландмарки руки.
 
-# Create a button that will start the camera when clicked
-button = tk.Button(window, text="Start Camera", command=lambda: Thread(target=start_camera).start())
-button.pack()
+    Повертає:
+    - Список, який представляє стан кожного пальця (0 або 1).
+    - Загальна кількість піднятих пальців.
+    """
+    finger_states = [0, 0, 0, 0, 0]
+    if hand_landmarks.landmark[2].x > hand_landmarks.landmark[4].x:  # Великий
+        finger_states[0] = 1
+    if hand_landmarks.landmark[4].x < hand_landmarks.landmark[20].x:
+        finger_states[0] = hand_landmarks.landmark[4].x < hand_landmarks.landmark[2].x
 
-# Initialize MediaPipe
-mp_drawing = mp.solutions.drawing_utils
-mp_hands = mp.solutions.hands
+    else:
+        finger_states[0] = hand_landmarks.landmark[4].x > hand_landmarks.landmark[2].x
 
-# Function to start the camera
-def start_camera():
-    cap = cv2.VideoCapture(0)
-    with mp_hands.Hands(static_image_mode=False, max_num_hands=2, min_detection_confidence=0.5, min_tracking_confidence=0.5) as hands:
-        mp_face_detection = mp.solutions.face_detection
-        face_regions = []  # Initialize face_regions
+    if hand_landmarks.landmark[6].y > hand_landmarks.landmark[8].y:
+        finger_states[1] = 1
 
-        with mp_face_detection.FaceDetection(model_selection=0, min_detection_confidence=0.5) as face_detection:
-            blur_enabled = True
-            while cap.isOpened():
-                ret, frame = cap.read()
-                if not ret:
-                    break
+    if hand_landmarks.landmark[10].y > hand_landmarks.landmark[12].y:  # середній
+        finger_states[2] = 1
 
-                # Flip the image horizontally for a later selfie-view display
-                frame = cv2.cvtColor(cv2.flip(frame, 1), cv2.COLOR_BGR2RGB)
-                # To improve performance, optionally mark the image as not writeable to pass by reference.
-                frame.flags.writeable = False
-                results = hands.process(frame)
+    if hand_landmarks.landmark[14].y > hand_landmarks.landmark[16].y:
+        finger_states[3] = 1
 
-                # Draw the hand annotations on the image.
-                frame.flags.writeable = True
-                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                if results.multi_hand_landmarks:
-                    for hand_landmarks in results.multi_hand_landmarks:
-                        mp_drawing.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+    if hand_landmarks.landmark[18].y > hand_landmarks.landmark[20].y:
+        finger_states[4] = 1
 
-                        hand_x, hand_y = hand_landmarks.landmark[0].x * frame.shape[1], hand_landmarks.landmark[0].y * frame.shape[0]
-                        face_regions = detect_faces(frame, face_detection)
-                        hand_in_face_region = False
-                        for face_region in face_regions:
-                            x1, y1, w, h = face_region
-                            if x1 < hand_x < x1 + w and y1 < hand_y < y1 + h:
-                                hand_in_face_region = True
-                                break
+    fingers_count = sum(finger_states)
 
-                        if not hand_in_face_region:
-                            finger_states, fingers_count = calculate_finger_states(hand_landmarks)
+    return finger_states, fingers_count
 
-                            if fingers_count == 1:
-                                blur_enabled = True
-                            elif fingers_count == 5:
-                                blur_enabled = False
+def unblur_face(img, face_detection):
+    """
+    Убрать размытие с лиц на изображении.
 
-                if blur_enabled:
-                    frame = blur_faces(frame, face_regions)
+    Аргументы:
+    - img: Входное изображение.
+    - face_detection: Модель обнаружения лиц.
 
-                # Convert the image from OpenCV BGR format to Tkinter RGB format
-                image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                image = Image.fromarray(image)
-                image = ImageTk.PhotoImage(image)
-
-                # Update the label with the new image
-                label.config(image=image)
-                label.image = image
-
-    cap.release()
-
-def detect_faces(img, face_detection):
+    Возвращает:
+    - Изображение с не размытыми лицами.
+    """
     H, W, _ = img.shape
+    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    out = face_detection.process(img_rgb)
+
+    if out.detections is not None:
+        for detection in out.detections:
+            location_data = detection.location_data
+            bbox = location_data.relative_bounding_box
+
+            x1, y1, w, h = int(bbox.xmin * W), int(bbox.ymin * H), int(bbox.width * W), int(bbox.height * H)
+
+            if w > 0 and h > 0:
+                face_region = img[y1:y1 + h, x1:x1 + w, :]
+                if not face_region.size == 0:
+                    img[y1:y1 + h, x1:x1 + w, :] = face_region
+
+    return img
+def process_image_with_detection(img, face_detection, hands_detection, blur_enabled=True):
+    """
+    Обробка зображення шляхом виявлення обличчя та рук, та застосування розмиття на основі жестів рук.
+
+    Аргументи:
+    - img: Вхідне зображення.
+    - face_detection: Модель виявлення облич.
+    - hands_detection: Модель виявлення рук.
+    - blur_enabled: Булеве значення, що вказує, чи застосовувати розмиття.
+
+    Повертає:
+    - Оброблене зображення.
+    - Поточний стан розмиття.
+    """
+
+    H, W, _ = img.shape
+
+    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    out1 = hands_detection.process(img_rgb)
+
+    hand_regions = []
+    if out1.multi_hand_landmarks:
+        for hand_landmarks in out1.multi_hand_landmarks:
+            hand_x, hand_y = hand_landmarks.landmark[0].x * W, hand_landmarks.landmark[0].y * H
+
+            finger_states, fingers_count = calculate_finger_states(hand_landmarks)
+
+            if fingers_count == 1 and finger_states[1] == 1:
+                blur_enabled = True
+            else:
+                blur_enabled = False
+
+            hand_regions.append((hand_x, hand_y, finger_states, fingers_count))
+
+    for hand_x, hand_y, finger_states, fingers_count in hand_regions:
+        if blur_enabled:
+            # Збільшуємо область розмиття вище руки
+            blur_radius = 100
+            img[int(hand_y) - blur_radius * 2:int(hand_y) + 20,
+            int(hand_x) - blur_radius:int(hand_x) + blur_radius] = cv2.blur(
+                img[int(hand_y) - blur_radius * 2:int(hand_y) + 20,
+                int(hand_x) - blur_radius:int(hand_x) + blur_radius], (70, 70))
+
+    return img, blur_enabled
+def process_img(img, face_detection, hands_detection, blur_enabled=True):
+    """
+    Обработка изображения путем обнаружения лиц и рук, и применения размытия на основе жестов рук.
+
+    Аргументы:
+    - img: Входное изображение.
+    - face_detection: Модель обнаружения лиц.
+    - hands_detection: Модель обнаружения рук.
+    - blur_enabled: Булево значение, указывающее, применять ли размытие.
+
+    Возвращает:
+    - Обработанное изображение.
+    - Текущее состояние размытия.
+    """
+    H, W, _ = img.shape
+
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     out = face_detection.process(img_rgb)
 
@@ -93,38 +141,90 @@ def detect_faces(img, face_detection):
             if w > 0 and h > 0:
                 face_regions.append((x1, y1, w, h))
 
-    return face_regions
+                face_region = img[y1:y1 + h, x1:x1 + w, :]
+                if not face_region.size == 0:
+                    if blur_enabled:
+                        img[y1:y1 + h, x1:x1 + w, :] = cv2.blur(face_region, (30, 30))
+                    else:
+                        img[y1:y1 + h, x1:x1 + w, :] = unblur_face(face_region, face_detection)
 
-def blur_faces(img, face_regions):
-    for face_region in face_regions:
-        x1, y1, w, h = face_region
-        face_region = img[y1:y1 + h, x1:x1 + w, :]
-        if not face_region.size == 0:
-            img[y1:y1 + h, x1:x1 + w, :] = cv2.blur(face_region, (30, 30))
+    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    results = hands_detection.process(img_rgb)
 
-    return img
+    if results.multi_hand_landmarks:
+        for hand_landmarks in results.multi_hand_landmarks:
+            hand_x, hand_y = hand_landmarks.landmark[0].x * W, hand_landmarks.landmark[0].y * H
+            hand_in_face_region = False
+            for face_region in face_regions:
+                x1, y1, w, h = face_region
+                if x1 < hand_x < x1 + w and y1 < hand_y < y1 + h:
+                    hand_in_face_region = True
+                    break
 
-def calculate_finger_states(hand_landmarks):
-    finger_states = [0, 0, 0, 0, 0]
+            if not hand_in_face_region:
+                finger_states, fingers_count = calculate_finger_states(hand_landmarks)
 
-    if hand_landmarks.landmark[3].y > hand_landmarks.landmark[4].y:
-        finger_states[0] = 1
+                if fingers_count == 1 and finger_states[4]==1:
+                    blur_enabled = True
+                elif fingers_count == 2 and finger_states[1]==1 and finger_states[2] ==1:
+                    blur_enabled = False
+                elif fingers_count == 1 and finger_states[1] == 1:
+                    process_image_with_detection(img, face_detection, hands_detection, blur_enabled=True)
 
-    if hand_landmarks.landmark[6].y > hand_landmarks.landmark[8].y:
-        finger_states[1] = 1
 
-    if hand_landmarks.landmark[10].y > hand_landmarks.landmark[12].y:
-        finger_states[2] = 1
 
-    if hand_landmarks.landmark[14].y > hand_landmarks.landmark[16].y:
-        finger_states[3] = 1
+    return img, blur_enabled
 
-    if hand_landmarks.landmark[18].y > hand_landmarks.landmark[20].y:
-        finger_states[4] = 1
+output_dir = './output'
+if not os.path.exists(output_dir):
+    os.makedirs(output_dir)
 
-    fingers_count = sum(finger_states)
+mp_face_detection = mp.solutions.face_detection
+with mp_face_detection.FaceDetection(model_selection=0, min_detection_confidence=0.5) as face_detection:
+    mp_hands = mp.solutions.hands
+    with mp_hands.Hands(static_image_mode=False, max_num_hands=1, min_detection_confidence=0.5) as hands_detection:
 
-    return finger_states, fingers_count
+        args = {"mode": 'webcam', "filePath": None}
 
-# Start the Tkinter event loop
-window.mainloop()
+        if args["mode"] in ["image"]:
+            img = cv2.imread(args["filePath"])
+
+            img = process_img(img, face_detection, hands_detection)
+
+            cv2.imwrite(os.path.join(output_dir, 'output.png'), img)
+
+        elif args["mode"] in ['video']:
+            cap = cv2.VideoCapture(args["filePath"])
+            ret, frame = cap.read()
+
+            output_video = cv2.VideoWriter(os.path.join(output_dir, 'output.mp4'),
+                                           cv2.VideoWriter_fourcc(*'MP4V'),
+                                           25,
+                                           (frame.shape[1], frame.shape[0]))
+
+            while ret:
+                frame = process_img(frame, face_detection, hands_detection)
+
+                output_video.write(frame)
+
+                ret, frame = cap.read()
+
+            cap.release()
+            output_video.release()
+
+        elif args["mode"] in ['webcam']:
+            cap = cv2.VideoCapture(0)
+
+            ret, frame = cap.read()
+            blur_enabled = True
+            while ret:
+                frame, blur_enabled = process_img(frame, face_detection, hands_detection, blur_enabled)
+
+                cv2.imshow('frame', frame)
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
+
+                ret, frame = cap.read()
+
+            cap.release()
+

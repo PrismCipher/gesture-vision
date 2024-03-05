@@ -15,13 +15,12 @@ def process_img(img, face_detection, hands_detection, blur_enabled=True):
 
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     if blur_enabled:
-        img = blur_face(img)
+        img = blur_face(img, face_detection)
 
     results = hands_detection.process(img_rgb)
     if results.multi_hand_landmarks:
         for hand_landmarks in results.multi_hand_landmarks:
             #hand_x, hand_y = hand_landmarks.landmark[0].x * W, hand_landmarks.landmark[0].y * H
-
             finger_states, fingers_count = calculate_finger_states(hand_landmarks)
 
             if fingers_count == 1:
@@ -31,7 +30,7 @@ def process_img(img, face_detection, hands_detection, blur_enabled=True):
 
     return img, blur_enabled
 
-def blur_face(frame):
+def blur_face(frame, face_detection):
     frame_copy = frame.copy()
     height, width, _ = frame.shape
     img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -77,55 +76,59 @@ def calculate_finger_states(hand_landmarks):
 
     return finger_states, fingers_count
 
-output_dir = './output'
-if not os.path.exists(output_dir):
-    os.makedirs(output_dir)
+def check_output_dir(output_dir):
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
 
-# Loading models
-with mp_face_mesh.FaceMesh(static_image_mode=False, min_detection_confidence=0.5, min_tracking_confidence=0.5) as face_detection:
-    with mp_hands.Hands(static_image_mode=False, max_num_hands=1, min_detection_confidence=0.5) as hands_detection:
+def main():
+    # Loading models
+    with mp_face_mesh.FaceMesh(static_image_mode=False, min_detection_confidence=0.5, min_tracking_confidence=0.5) as face_detection:
+        with mp_hands.Hands(static_image_mode=False, max_num_hands=1, min_detection_confidence=0.7) as hands_detection:
 
-        args = {"mode": 'webcam', "filePath": None}
+            args = {"mode": 'webcam', "filePath": None}
+            output_dir = './output'
+            if args["mode"] in ["image"]:
+                img = cv2.imread(args["filePath"])
 
-        if args["mode"] in ["image"]:
-            img = cv2.imread(args["filePath"])
+                img = process_img(img, face_detection, hands_detection)
+                check_output_dir(output_dir)
+                cv2.imwrite(os.path.join(output_dir, 'output.png'), img)
 
-            img = process_img(img, face_detection, hands_detection)
+            elif args["mode"] in ['video']:
+                cap = cv2.VideoCapture(args["filePath"])
+                ret, frame = cap.read()
+                check_output_dir(output_dir)
+                output_video = cv2.VideoWriter(os.path.join(output_dir, 'output.mp4'),
+                                               cv2.VideoWriter_fourcc(*'MP4V'),
+                                               25,
+                                               (frame.shape[1], frame.shape[0]))
 
-            cv2.imwrite(os.path.join(output_dir, 'output.png'), img)
+                while ret:
+                    frame = process_img(frame, face_detection, hands_detection)
 
-        elif args["mode"] in ['video']:
-            cap = cv2.VideoCapture(args["filePath"])
-            ret, frame = cap.read()
+                    output_video.write(frame)
 
-            output_video = cv2.VideoWriter(os.path.join(output_dir, 'output.mp4'),
-                                           cv2.VideoWriter_fourcc(*'MP4V'),
-                                           25,
-                                           (frame.shape[1], frame.shape[0]))
+                    ret, frame = cap.read()
 
-            while ret:
-                frame = process_img(frame, face_detection, hands_detection)
+                cap.release()
+                output_video.release()
 
-                output_video.write(frame)
+            elif args["mode"] in ['webcam']:
+                cap = cv2.VideoCapture(0)
 
                 ret, frame = cap.read()
+                blur_enabled = True  
+                while ret:
+                    frame, blur_enabled = process_img(frame, face_detection, hands_detection, blur_enabled)
 
-            cap.release()
-            output_video.release()
+                    cv2.imshow('frame', frame)
+                    if cv2.waitKey(1) & 0xFF == ord('q'):  
+                        break
 
-        elif args["mode"] in ['webcam']:
-            cap = cv2.VideoCapture(0)
+                    ret, frame = cap.read()
 
-            ret, frame = cap.read()
-            blur_enabled = True  
-            while ret:
-                frame, blur_enabled = process_img(frame, face_detection, hands_detection, blur_enabled)
+                cv2.destroyAllWindows()
+                cap.release()
 
-                cv2.imshow('frame', frame)
-                if cv2.waitKey(1) & 0xFF == ord('q'):  
-                    break
-
-                ret, frame = cap.read()
-            # destroy all windows
-            cv2.destroyAllWindows()
-            cap.release()
+if __name__ == "__main__":
+    main()
