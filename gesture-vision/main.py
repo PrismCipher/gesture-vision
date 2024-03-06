@@ -25,6 +25,7 @@ class FaceBlurApp(customtkinter.CTk):
         self.is_debug_enabled = False
         self.is_gesture_enabled = False
         self.is_handblur_enabled = False
+        self.blur_enabled = True
         # creating widgets
 
         self.image_label = tk.Label(master=self)
@@ -88,7 +89,7 @@ class FaceBlurApp(customtkinter.CTk):
     def update_frame(self):
         ret, frame = self.video.read()
         if ret:
-            frame = self.img_proc.process_start(frame, self.is_handblur_enabled, self.is_gesture_enabled)
+            frame, self.blur_enabled = self.img_proc.process_start(frame, self.is_handblur_enabled, self.is_gesture_enabled, self.blur_enabled)
             # Зеркально отразить кадр по горизонтали
             #frame = cv2.flip(frame, 1)
 

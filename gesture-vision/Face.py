@@ -114,14 +114,14 @@ class image_processor:
                         blur_enabled = False
                     elif fingers_count == 1 and finger_states[1] == 1 and handblur_enabled:
                         self.process_image_with_detection(img, hands_detection)
-        return img
-    def process_start(self, frame, is_handblur_enabled, is_gesture_enabled):
+        return img, blur_enabled
+    def process_start(self, frame, is_handblur_enabled, is_gesture_enabled, blur_enabled):
         mp_face_mesh = mp.solutions.face_mesh
         with mp_face_mesh.FaceMesh(static_image_mode=False, min_detection_confidence=0.5, min_tracking_confidence=0.5) as face_detection:
             mp_hands = mp.solutions.hands
             with mp_hands.Hands(static_image_mode=False, max_num_hands=1, min_detection_confidence=0.5) as hands_detection:
-                frame = self.process_img(frame, face_detection, hands_detection, is_handblur_enabled, is_gesture_enabled)
-        return frame
+                frame, blur_enabled = self.process_img(frame, face_detection, hands_detection, is_handblur_enabled, is_gesture_enabled, blur_enabled)
+        return frame, blur_enabled
 
 
 def check_output_dir(output_dir):
@@ -168,7 +168,7 @@ def main():
                 ret, frame = cap.read()
                 blur_enabled = True
                 while ret:
-                    frame, blur_enabled = processor.process_img(frame, face_detection, hands_detection, blur_enabled)
+                    frame, blur_enabled = processor.process_img(frame, face_detection, hands_detection, True, True, blur_enabled)
 
                     cv2.imshow('frame', frame)
                     if cv2.waitKey(1) & 0xFF == ord('q'):
