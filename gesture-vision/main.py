@@ -1,5 +1,4 @@
 import cv2
-import mediapipe as mp
 import customtkinter
 import tkinter as tk
 from Face import image_processor
@@ -47,9 +46,9 @@ class FaceBlurApp(customtkinter.CTk):
         self.debug_button = customtkinter.CTkButton(self.button_frame, text="Debug", command=self.toggle_debug_console)
         self.debug_button.grid(row=0, column=5, padx=20, pady=15, sticky="ew")
 
-        self.gray_image = Image.new("RGB", (640, 480), "gray")  # Создаем серый прямоугольник
+        self.gray_image = Image.new("RGB", (640, 480), "gray")
         self.gray_photo = ImageTk.PhotoImage(self.gray_image)
-        self.image_label.config(image=self.gray_photo)  # Устанавливаем серый прямоугольник по умолчанию
+        self.image_label.config(image=self.gray_photo)
 
         self.debug_console = None
         self.timer = None
@@ -84,14 +83,13 @@ class FaceBlurApp(customtkinter.CTk):
         if self.timer:
             self.after_cancel(self.timer)
         self.video.release()
-        self.image_label.config(image=self.gray_photo)  # При отключении камеры отображаем серый прямоугольник
+        self.image_label.config(image=self.gray_photo)
 
     def update_frame(self):
         ret, frame = self.video.read()
         if ret:
             frame, self.blur_enabled = self.img_proc.process_start(frame, self.is_handblur_enabled, self.is_gesture_enabled, self.blur_enabled)
-            # Зеркально отразить кадр по горизонтали
-            #frame = cv2.flip(frame, 1)
+            frame = cv2.flip(frame, 1)
 
             rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             img = Image.fromarray(rgb_image)
@@ -131,7 +129,7 @@ class FaceBlurApp(customtkinter.CTk):
         if not self.debug_console:
             self.debug_console = tk.Toplevel()
             self.debug_console.title("Debug Console")
-            self.debug_console.resizable(False, False)  # Запрещаем изменение размеров окна
+            self.debug_console.resizable(False, False)
 
             self.debug_text = Text(self.debug_console)
             self.debug_text.pack(expand=True, fill=tk.BOTH)
