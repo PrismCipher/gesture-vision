@@ -2,11 +2,8 @@ import cv2
 import mediapipe as mp
 import customtkinter
 import tkinter as tk
-import threading
-import queue
-from tkinter import Text, Scrollbar
 from Face import image_processor
-from facial_landmarks import FaceLandmarks
+from tkinter import Text, Scrollbar
 from PIL import Image, ImageTk
 
 customtkinter.set_appearance_mode("System")
@@ -62,7 +59,8 @@ class FaceBlurApp(customtkinter.CTk):
 
         self.toplevel_window = None
 
-        self.camera_lock = threading.Lock()
+        # Initialize image processor
+        self.img_proc = image_processor()
 
     # Functions creating
 
@@ -73,19 +71,17 @@ class FaceBlurApp(customtkinter.CTk):
         if self.is_camera_enabled:
             self.toggle_camera_button.configure(fg_color="#C850C0", hover_color="#c85090")
             self.start_camera()
-            self.start_threads()
             if self.is_debug_enabled:
                 self.send_debug_message("camera enabled")
         else:
             self.toggle_camera_button.configure(fg_color="#1f538d", hover_color="#14375e")
             self.stop_camera()
-            self.stop_threads()
             if self.is_debug_enabled:
                 self.send_debug_message("camera disabled")
 
     def start_camera(self):
         self.video = cv2.VideoCapture(0)
-        self.timer = self.after(5, self.update_frame)
+        self.timer = self.after(10, self.update_frame)
 
     def stop_camera(self):
         if self.timer:
@@ -96,24 +92,16 @@ class FaceBlurApp(customtkinter.CTk):
     def update_frame(self):
         ret, frame = self.video.read()
         if ret:
-            self.transfer_frame(frame)
-            if self.queue_process_interface.empty():
-                # Зеркально отразить кадр по горизонтали
-                frame = cv2.flip(frame, 1)
+            frame = self.img_proc.process_start(frame, self.is_faceblur_enabled, self.is_handblur_enabled, self.is_gesture_enabled)
+            # Зеркально отразить кадр по горизонтали
+            frame = cv2.flip(frame, 1)
 
-                rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                img = Image.fromarray(rgb_image)
-                img = ImageTk.PhotoImage(image=img)
+            rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            img = Image.fromarray(rgb_image)
+            img = ImageTk.PhotoImage(image=img)
 
-                self.image_label.img = img
-                self.image_label.config(image=img)
-            else:
-                frame = self.queue_process_interface.get()
-                rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                img = Image.fromarray(rgb_image)
-                img = ImageTk.PhotoImage(image=img)
-                self.image_label.img = img
-                self.image_label.config(image=img)
+            self.image_label.img = img
+            self.image_label.config(image=img)
 
         if self.is_camera_enabled:
             self.timer = self.after(10, self.update_frame)
@@ -190,54 +178,6 @@ class FaceBlurApp(customtkinter.CTk):
             self.toggle_gesture_button.configure(fg_color="#1f538d", hover_color="#14375e")
             if self.is_debug_enabled:
                 self.send_debug_message("gesture recognition disabled")
-    
-    # SCARY THING - THREADING
-
-    queue_interface_process = queue.Queue()
-    queue_process_interface = queue.Queue()
-
-    def transfer_frame(self, frame):
-        self.queue_interface_process.put(frame)
-
-    def start_threads(self):
-        self.process_image_thread = threading.Thread(target=self.process_image_thread)
-        self.get_result_thread = threading.Thread(target=self.get_result_thread)
-        self.process_image_thread.start()
-        self.get_result_thread.start()
-
-    def stop_threads(self):
-        # Add a way to stop the threads
-        self.is_camera_enabled = False
-        # Wait for the threads to finish
-        self.process_image_thread.join()
-        self.get_result_thread.join()
-
-    def process_image_thread(self, frame):
-        while self.is_camera_enabled:
-            processor = image_processor()
-            mp_face_mesh = mp.solutions.face_mesh
-            mp_hands = mp.solutions.hands
-            face_detection, hands_detection = None, None
-            if self.is_faceblur_enabled:
-                face_detection = mp_face_mesh.FaceMesh(static_image_mode=False, min_detection_confidence=0.5, min_tracking_confidence=0.5)
-            if self.is_gesture_enabled:
-                hands_detection = mp_hands.Hands(static_image_mode=False, max_num_hands=1, min_detection_confidence=0.5)
-            while True:
-                if not self.queue_interface_process.empty():
-                    frame = self.queue_interface_process.get()
-                    frame = processor.process_img(frame, face_detection, hands_detection, self.is_faceblur_enabled)
-                    self.queue_process_interface.put(frame)
-                    
-    def get_result_thread(self):
-        while self.is_camera_enabled:
-            if not self.queue_process_interface.empty():
-                frame = self.queue_process_interface.get()
-                rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                img = Image.fromarray(rgb_image)
-                img = ImageTk.PhotoImage(image=img)
-                self.image_label.img = img
-                self.image_label.config(image=img)
-
 
 if __name__ == "__main__":
     app = FaceBlurApp()

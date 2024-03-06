@@ -83,13 +83,12 @@ class image_processor:
                     int(hand_x) - blur_radius:int(hand_x) + blur_radius], (70, 70))
 
         return img, blur_enabled
-    def process_img(self, img, face_detection, hands_detection, blur_enabled=True):
+    def process_img(self, img, face_detection, hands_detection, blur_enabled=True, handblur_enabled=True, gesture_enabled=True):
         H, W, _ = img.shape
-
         img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         if blur_enabled and face_detection is not None:
             img = self.blur_face(img, face_detection)
-        if hands_detection is not None:
+        if hands_detection is not None and gesture_enabled:
             results = hands_detection.process(img_rgb)
             if results.multi_hand_landmarks:
                 for hand_landmarks in results.multi_hand_landmarks:
@@ -100,9 +99,17 @@ class image_processor:
                         blur_enabled = True
                     elif fingers_count == 2 and finger_states[1] == 1 and finger_states[2] == 1:
                         blur_enabled = False
-                    elif fingers_count == 1 and finger_states[1] == 1:
+                    elif fingers_count == 1 and finger_states[1] == 1 and handblur_enabled:
                         self.process_image_with_detection(img, hands_detection)
-        return img, blur_enabled
+        return img
+    def process_start(self, frame, is_faceblur_enabled, is_handblur_enabled, is_gesture_enabled):
+        mp_face_mesh = mp.solutions.face_mesh
+        with mp_face_mesh.FaceMesh(static_image_mode=False, min_detection_confidence=0.5, min_tracking_confidence=0.5) as face_detection:
+            mp_hands = mp.solutions.hands
+            with mp_hands.Hands(static_image_mode=False, max_num_hands=1, min_detection_confidence=0.5) as hands_detection:
+                frame = self.process_img(frame, face_detection, hands_detection, is_faceblur_enabled, is_handblur_enabled, is_gesture_enabled)
+        return frame
+
 
 def check_output_dir(output_dir):
     if not os.path.exists(output_dir):
