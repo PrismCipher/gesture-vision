@@ -10,18 +10,31 @@ fl = FaceLandmarks()
 
 class image_processor:
     def calculate_finger_states(self, hand_landmarks):
-        landmarks = np.array([(landmark.x, landmark.y) for landmark in hand_landmarks.landmark])
-        finger_states = np.zeros(5, dtype=int)
-        
-        # Thumb
-        finger_states[0] = int(landmarks[2, 0] > landmarks[4, 0])
-        
-        # Other fingers
-        finger_states[1:] = (landmarks[[6, 10, 14, 18], 1] > landmarks[[8, 12, 16, 20], 1]).astype(int)
-        
-        fingers_count = np.sum(finger_states)
+        finger_states = [0, 0, 0, 0, 0]
+        if hand_landmarks.landmark[2].x > hand_landmarks.landmark[4].x:  # Великий
+            finger_states[0] = 1
+        if hand_landmarks.landmark[4].x < hand_landmarks.landmark[20].x:
+            finger_states[0] = hand_landmarks.landmark[4].x < hand_landmarks.landmark[2].x
+
+        else:
+            finger_states[0] = hand_landmarks.landmark[4].x > hand_landmarks.landmark[2].x
+
+        if hand_landmarks.landmark[6].y > hand_landmarks.landmark[8].y:
+            finger_states[1] = 1
+
+        if hand_landmarks.landmark[10].y > hand_landmarks.landmark[12].y:  # середній
+            finger_states[2] = 1
+
+        if hand_landmarks.landmark[14].y > hand_landmarks.landmark[16].y:
+            finger_states[3] = 1
+
+        if hand_landmarks.landmark[18].y > hand_landmarks.landmark[20].y:
+            finger_states[4] = 1
+
+        fingers_count = sum(finger_states)
 
         return finger_states, fingers_count
+
 
     def blur_face(self, frame, face_detection):
         frame_copy = frame.copy()
@@ -83,7 +96,7 @@ class image_processor:
                     int(hand_x) - blur_radius:int(hand_x) + blur_radius], (70, 70))
 
         return img, blur_enabled
-    def process_img(self, img, face_detection, hands_detection, blur_enabled=True, handblur_enabled=True, gesture_enabled=True):
+    def process_img(self, img, face_detection, hands_detection, handblur_enabled=True, gesture_enabled=True, blur_enabled=True):
         H, W, _ = img.shape
         img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         if blur_enabled and face_detection is not None:
@@ -102,12 +115,12 @@ class image_processor:
                     elif fingers_count == 1 and finger_states[1] == 1 and handblur_enabled:
                         self.process_image_with_detection(img, hands_detection)
         return img
-    def process_start(self, frame, is_faceblur_enabled, is_handblur_enabled, is_gesture_enabled):
+    def process_start(self, frame, is_handblur_enabled, is_gesture_enabled):
         mp_face_mesh = mp.solutions.face_mesh
         with mp_face_mesh.FaceMesh(static_image_mode=False, min_detection_confidence=0.5, min_tracking_confidence=0.5) as face_detection:
             mp_hands = mp.solutions.hands
             with mp_hands.Hands(static_image_mode=False, max_num_hands=1, min_detection_confidence=0.5) as hands_detection:
-                frame = self.process_img(frame, face_detection, hands_detection, is_faceblur_enabled, is_handblur_enabled, is_gesture_enabled)
+                frame = self.process_img(frame, face_detection, hands_detection, is_handblur_enabled, is_gesture_enabled)
         return frame
 
 

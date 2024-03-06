@@ -24,7 +24,6 @@ class FaceBlurApp(customtkinter.CTk):
         self.is_camera_enabled = False
         self.is_debug_enabled = False
         self.is_gesture_enabled = False
-        self.is_faceblur_enabled = False
         self.is_handblur_enabled = False
         # creating widgets
 
@@ -40,9 +39,6 @@ class FaceBlurApp(customtkinter.CTk):
 
         self.toggle_camera_button = customtkinter.CTkButton(self.button_frame, text="Camera", command=self.toggle_camera)
         self.toggle_camera_button.grid(row=0, column=1, padx=20, pady=15, sticky="ew")
-
-        self.faceblur_button = customtkinter.CTkButton(self.button_frame, text="Face Blur", command=self.toggle_faceblur)
-        self.faceblur_button.grid(row=0, column=2, padx=20, pady=15, sticky="ew")
 
         self.handblur_button = customtkinter.CTkButton(self.button_frame, text="Hand blur", command=self.toggle_handblur)
         self.handblur_button.grid(row=0, column=3, padx=20, pady=15, sticky="ew")
@@ -92,9 +88,9 @@ class FaceBlurApp(customtkinter.CTk):
     def update_frame(self):
         ret, frame = self.video.read()
         if ret:
-            frame = self.img_proc.process_start(frame, self.is_faceblur_enabled, self.is_handblur_enabled, self.is_gesture_enabled)
+            frame = self.img_proc.process_start(frame, self.is_handblur_enabled, self.is_gesture_enabled)
             # Зеркально отразить кадр по горизонтали
-            frame = cv2.flip(frame, 1)
+            #frame = cv2.flip(frame, 1)
 
             rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             img = Image.fromarray(rgb_image)
@@ -105,19 +101,6 @@ class FaceBlurApp(customtkinter.CTk):
 
         if self.is_camera_enabled:
             self.timer = self.after(10, self.update_frame)
-
-    # FACE BLUR
-
-    def toggle_faceblur(self):
-        self.is_faceblur_enabled = not self.is_faceblur_enabled
-        if self.is_faceblur_enabled:
-            self.faceblur_button.configure(fg_color="#C850C0", hover_color="#c85090")
-            if self.is_debug_enabled:
-                self.send_debug_message("Face blur enabled")
-        else:
-            self.faceblur_button.configure(fg_color="#1f538d", hover_color="#14375e")
-            if self.is_debug_enabled:
-                self.send_debug_message("Face blur disabled")
 
     # HANDS BLUR
 
